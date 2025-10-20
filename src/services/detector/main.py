@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from src.common.db import engine, Base
 from src.common.config import settings
+from datetime import datetime
 
 # Import API routers
 from src.services.detector.api.endpoints_v1 import router as v1_router
