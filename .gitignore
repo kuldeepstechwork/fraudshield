@@ -1,4 +1,54 @@
-echo "venv/" >> .gitignore
-echo "__pycache__/" >> .gitignore
-echo "*.pyc" >> .gitignore
-echo ".DS_Store" >> .gitignore
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+*.egg
+*.sqlite3
+
+# --- Virtual Environments ---
+venv/
+.venv/
+
+# --- Environment & Secrets ---
+.env
+.env.*
+*.pem
+
+# --- Logs & Runtime Files ---
+*.log
+*.pid
+*.seed
+*.out
+
+# --- OS Files ---
+.DS_Store
+Thumbs.db
+
+# --- IDEs ---
+.vscode/
+.idea/
+
+# --- Alembic ---
+alembic/versions/__pycache__/
+
+# --- Testing ---
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.pytest_cache/
+
+# --- Docker ---
+*.db
+docker-compose.override.yml
+docker-compose.dev.yml
+.docker/
+.dockerignore
+
+# --- Build ---
+dist/
+build/
+*.egg-info/
