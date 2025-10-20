@@ -1,4 +1,3 @@
-(The file `/Users/kuldeepsingh/Desktop/projects/fraudshield/fraudshield/README.md` exists, but is empty)
 # FraudShield
 
 Lightweight fraud detection microservice suite (FastAPI + Kafka + Postgres).
