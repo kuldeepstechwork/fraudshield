@@ -1,0 +1,13 @@
+# fraudshield/requirements.txt
+
+fastapi
+uvicorn[standard]
+aiokafka
+sqlalchemy
+asyncpg
+pydantic
+pydantic-settings
+alembic
+# If you plan to use an ORM for Kafka, you might add:
+# confluent-kafka # if using the C++ client with Python bindings, often faster
+# python-dotenv # if you need to load .env files manually outside pydantic-settings
