@@ -25,7 +25,7 @@ async def get_kafka_consumer(
                 bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
                 group_id=group_id,
                 auto_offset_reset=auto_offset_reset,
-                enable_auto_commit=True
+                enable_auto_commit=False  # prefer manual commit after successful processing
             )
             await consumer.start()
             break

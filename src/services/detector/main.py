@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from src.common.db import engine, Base
 from src.common.config import settings
 from datetime import datetime
+from aiokafka import AIOKafkaProducer
 
 # Import API routers
 from src.services.detector.api.endpoints_v1 import router as v1_router
@@ -24,6 +25,10 @@ async def lifespan(app: FastAPI):
     """
     # --- Startup events ---
     print(f"[{datetime.utcnow().isoformat()}] Detector service starting...")
+    # Start a long-lived Kafka producer and attach to app state for reuse
+    producer = AIOKafkaProducer(bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS)
+    await producer.start()
+    app.state.kafka_producer = producer
     
     # In a production environment, use Alembic for migrations.
     # For development/initial setup, you can uncomment this to create tables automatically.
@@ -36,6 +41,11 @@ async def lifespan(app: FastAPI):
 
     # --- Shutdown events ---
     print(f"[{datetime.utcnow().isoformat()}] Detector service shutting down...")
+    # Stop long-lived Kafka producer
+    try:
+        await app.state.kafka_producer.stop()
+    except Exception:
+        pass
 
 
 # Initialize the FastAPI application

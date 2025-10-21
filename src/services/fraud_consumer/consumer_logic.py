@@ -92,8 +92,18 @@ async def process_payment_message(message_data: dict, db_session: AsyncSession):
         fraud_score, fraud_flag, reason_code, risk_level = await run_fraud_detection_logic(message_data, db_session)
 
         # --- Save Payment Record to Database ---
+        # If producer provided a client-visible payment_id include it; otherwise generate one
+        incoming_payment_id = message_data.get("payment_id")
+        if incoming_payment_id:
+            try:
+                payment_uuid = uuid.UUID(incoming_payment_id)
+            except Exception:
+                payment_uuid = uuid.uuid4()
+        else:
+            payment_uuid = uuid.uuid4()
+
         new_payment = Payment(
-            payment_id=uuid.uuid4(), # Generate new ID for the processed payment
+            payment_id=payment_uuid,
             user_id=user_id,
             merchant_id=merchant_id,
             amount=amount,
@@ -114,9 +124,10 @@ async def process_payment_message(message_data: dict, db_session: AsyncSession):
         )
 
         db_session.add(new_payment)
-        await db_session.flush() # Flush to get new_payment.payment_id before commit if needed for alert
+        await db_session.flush()  # Flush to get new_payment.payment_id before commit if needed for alert
 
         # --- Create Alert if Fraud Flagged ---
+        new_alert = None
         if fraud_flag:
             new_alert = Alert(
                 alert_id=uuid.uuid4(),
@@ -125,15 +136,40 @@ async def process_payment_message(message_data: dict, db_session: AsyncSession):
                 alert_type="Potential Fraud",
                 description=f"Payment flagged with score {fraud_score} (Risk: {risk_level}) due to: {reason_code or 'Various indicators'}",
                 timestamp=datetime.utcnow(),
-                status="New" # Analyst needs to review
+                status="New"  # Analyst needs to review
             )
             db_session.add(new_alert)
-        
+
         await db_session.commit()
-        await db_session.refresh(new_payment) # Refresh to get latest state including auto-generated fields if any
-        
+        await db_session.refresh(new_payment)  # Refresh to get latest state including auto-generated fields if any
+        if new_alert:
+            await db_session.refresh(new_alert)
+
         print(f"Successfully processed payment {new_payment.payment_id}. Fraud Flag: {new_payment.fraud_flag}, Score: {new_payment.fraud_score}")
+
+        # Return result info for publishing
+        result = {
+            "payment_id": str(new_payment.payment_id),
+            "user_id": str(new_payment.user_id),
+            "merchant_id": str(new_payment.merchant_id),
+            "amount": str(new_payment.amount),
+            "fraud_score": str(new_payment.fraud_score),
+            "fraud_flag": bool(new_payment.fraud_flag),
+            "risk_level": new_payment.risk_level,
+            "status": new_payment.status,
+        }
+        alert_result = None
+        if new_alert:
+            alert_result = {
+                "alert_id": str(new_alert.alert_id),
+                "payment_id": str(new_alert.payment_id),
+                "user_id": str(new_alert.user_id),
+                "description": new_alert.description,
+                "status": new_alert.status,
+            }
+        return result, alert_result
 
     except Exception as e:
         print(f"Error in process_payment_message for data {message_data}: {e}")
         await db_session.rollback() # Rollback transaction on error
+        raise

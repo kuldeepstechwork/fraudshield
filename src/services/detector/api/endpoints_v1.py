@@ -27,6 +27,9 @@ from src.services.detector.dependencies import get_db_session, get_kafka_produce
 
 # Import config for Kafka topic names
 from src.common.config import settings
+import logging
+
+LOG = logging.getLogger("detector.api")
 
 router = APIRouter()
 
@@ -115,11 +118,15 @@ async def process_payment_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
 
     try:
-        # Convert Pydantic model to dict
+        # Generate a client-visible payment_id so the caller can poll status
+        client_payment_id = str(uuid.uuid4())
+
+        # Convert Pydantic model to dict and include client-generated id
         payment_dict = payment_data.model_dump()
+        payment_dict["payment_id"] = client_payment_id
 
         # Convert Decimal/UUID for JSON serialization
-        for k, v in payment_dict.items():
+        for k, v in list(payment_dict.items()):
             if isinstance(v, Decimal):
                 payment_dict[k] = str(v)
             elif isinstance(v, uuid.UUID):
@@ -127,10 +134,15 @@ async def process_payment_endpoint(
 
         message_bytes = json.dumps(payment_dict).encode("utf-8")
 
+        # Log payload before sending for debugging
+        LOG.info("Sending payment message to Kafka topic=%s payload=%s", settings.KAFKA_RAW_PAYMENTS_TOPIC, payment_dict)
+
         # Send to Kafka
         await producer.send_and_wait(settings.KAFKA_RAW_PAYMENTS_TOPIC, message_bytes)
 
-        return {"message": "Payment received and sent to Kafka for processing", "status": "accepted"}
+        # Return accepted and the client-visible payment id so callers can query later
+        return {"message": "Payment received and sent to Kafka for processing", "status": "accepted", "payment_id": client_payment_id}
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
