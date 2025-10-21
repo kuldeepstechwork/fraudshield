@@ -32,9 +32,10 @@ class Payment(Base):
     # Relationships - defined as strings to avoid circular imports, or import later
     # 'User' and 'Merchant' are in user_models.py, 'Alert' in fraud_models.py
     # These will be set up in the respective models using back_populates
-    # user = relationship("User", back_populates="payments")
-    # merchant = relationship("Merchant", back_populates="payments")
-    # alerts = relationship("Alert", back_populates="payment", cascade="all, delete-orphan")
+    # Define relationships to match back_populates on related models
+    user = relationship("User", back_populates="payments")
+    merchant = relationship("Merchant", back_populates="payments")
+    alerts = relationship("Alert", back_populates="payment", cascade="all, delete-orphan")
 
 
 class LogRequest(Base):
@@ -53,4 +54,4 @@ class LogRequest(Base):
     error_message = Column(Text, nullable=True)
 
     # Relationships
-    # user = relationship("User", back_populates="log_requests")
+    user = relationship("User", back_populates="log_requests")

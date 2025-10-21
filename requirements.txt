@@ -8,6 +8,8 @@ asyncpg
 pydantic
 pydantic-settings
 alembic
+email-validator
+
 # If you plan to use an ORM for Kafka, you might add:
 # confluent-kafka # if using the C++ client with Python bindings, often faster
 # python-dotenv # if you need to load .env files manually outside pydantic-settings
