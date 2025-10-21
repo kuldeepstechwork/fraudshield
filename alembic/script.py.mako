@@ -1,3 +1,4 @@
+""" fraudshield/alembic/script.py.mako """
 """${message}
 
 Revision ID: ${up_revision}
