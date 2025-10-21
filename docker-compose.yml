@@ -1,18 +1,26 @@
-# fraudshield/docker-compose.yml
+version: '3.9'
 
 services:
   postgres:
     image: postgres:15
+    container_name: fraudshield_postgres
     restart: always
     env_file: .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-fraud_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fraudpass}
       POSTGRES_DB: ${POSTGRES_DB:-fraudshield_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespass}
     ports:
-      - '5432:5432' # optional, remove if you don't need host access
+      - '5432:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./db_init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.1
@@ -45,9 +53,15 @@ services:
     volumes:
       - ./:/app
     working_dir: /app
+    environment:
+      - PYTHONPATH=/app
     ports:
-      - '${API_PORT:-8000}:${API_PORT:-8000}'
-    command: /bin/sh -c "pip install --no-cache-dir -r requirements.txt && uvicorn src.services.detector.main:app --host 0.0.0.0 --port ${API_PORT:-8000}"
+      - "${API_PORT:-8000}:${API_PORT:-8000}"  # <-- expose FastAPI
+    command: /bin/sh -c "\
+      apt-get update && apt-get install -y postgresql-client && \
+      pip install --no-cache-dir -r requirements.txt && \
+      alembic upgrade head && \
+      uvicorn src.services.detector.main:app --host 0.0.0.0 --port ${API_PORT:-8000}"
 
   consumer:
     image: python:3.11-slim
@@ -60,7 +74,12 @@ services:
     volumes:
       - ./:/app
     working_dir: /app
-    command: /bin/sh -c "pip install --no-cache-dir -r requirements.txt && python -m src.services.fraud_consumer.main"
+    environment:
+      - PYTHONPATH=/app
+    command: /bin/sh -c "\
+      apt-get update && apt-get install -y postgresql-client && \
+      pip install --no-cache-dir -r requirements.txt && \
+      python -m src.services.fraud_consumer.main"
 
 volumes:
   pgdata:

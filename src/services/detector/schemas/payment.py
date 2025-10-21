@@ -6,21 +6,19 @@ from typing import Optional
 from datetime import datetime
 import uuid
 
-# Schema for creating a new payment (incoming request body)
 class PaymentCreate(BaseModel):
     user_id: uuid.UUID
     merchant_id: uuid.UUID
-    amount: Decimal = Field(..., gt=0, decimal_places=2) # Greater than 0, 2 decimal places
+    amount: Decimal = Field(..., gt=0, decimal_places=2)
     currency: str = Field(..., min_length=3, max_length=3)
     payment_method: str = Field(..., min_length=2, max_length=50)
     card_type: Optional[str] = None
     card_last_four: Optional[str] = None
     transaction_type: str = Field(..., min_length=2, max_length=20)
-    ip_address: Optional[str] = None # Will be parsed to INET by DB, use str for input
-    device_info: Optional[dict] = None # JSON data
+    ip_address: Optional[str] = None
+    device_info: Optional[dict] = None
     country: Optional[str] = None
 
-# Schema for the response after processing a payment (when it's saved in DB)
 class PaymentResponse(BaseModel):
     payment_id: uuid.UUID
     user_id: uuid.UUID
@@ -42,13 +40,12 @@ class PaymentResponse(BaseModel):
     reason_code: Optional[str] = None
 
     class Config:
-        from_attributes = True # Allows Pydantic to read ORM models
+        from_attributes = True
         json_encoders = {
-            Decimal: str, # Ensure Decimal is serialized as string
-            uuid.UUID: str # Ensure UUID is serialized as string
+            Decimal: str,
+            uuid.UUID: str
         }
 
-# Simplified schema for just fraud status (e.g., if you only want to query fraud for an ID)
 class PaymentFraudStatus(BaseModel):
     payment_id: uuid.UUID
     status: str

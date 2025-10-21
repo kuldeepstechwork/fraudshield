@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import Column, String, Float, DateTime, Boolean, DECIMAL, ForeignKey, Text, JSON
 from sqlalchemy.dialects.postgresql import UUID, INET, JSONB
 from sqlalchemy.orm import relationship
-from src.models.base import Base # Import Base from the new central location
+from src.models.base import Base
 
 class Payment(Base):
     __tablename__ = "payments"
@@ -29,10 +29,7 @@ class Payment(Base):
     reason_code = Column(String(100), nullable=True)
     risk_level = Column(String(20), default="Low", nullable=False)
 
-    # Relationships - defined as strings to avoid circular imports, or import later
-    # 'User' and 'Merchant' are in user_models.py, 'Alert' in fraud_models.py
-    # These will be set up in the respective models using back_populates
-    # Define relationships to match back_populates on related models
+    # Relationships
     user = relationship("User", back_populates="payments")
     merchant = relationship("Merchant", back_populates="payments")
     alerts = relationship("Alert", back_populates="payment", cascade="all, delete-orphan")

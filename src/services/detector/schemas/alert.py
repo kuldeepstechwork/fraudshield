@@ -5,18 +5,20 @@ from typing import Optional
 from datetime import datetime
 import uuid
 
-class AlertResponse(BaseModel):
-    alert_id: uuid.UUID
+class AlertCreate(BaseModel):
     payment_id: Optional[uuid.UUID]
     user_id: uuid.UUID
     rule_id: Optional[uuid.UUID]
     alert_type: str
     description: str
+    status: Optional[str] = "New"
+    assigned_to: Optional[uuid.UUID] = None
+    resolution_notes: Optional[str] = None
+    resolution_time: Optional[datetime] = None
+
+class AlertResponse(AlertCreate):
+    alert_id: uuid.UUID
     timestamp: datetime
-    status: str
-    assigned_to: Optional[uuid.UUID]
-    resolution_notes: Optional[str]
-    resolution_time: Optional[datetime]
 
     class Config:
         from_attributes = True

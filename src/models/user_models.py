@@ -23,10 +23,10 @@ class User(Base):
     country = Column(String(50), nullable=True)
     phone_number = Column(String(20), nullable=True)
 
-    # Relationships - defined as strings to avoid circular imports at module import time
-    payments = relationship("Payment", back_populates="user")
-    log_requests = relationship("LogRequest", back_populates="user")
-    alerts = relationship("Alert", back_populates="user")
+    # Relationships
+    payments = relationship("Payment", back_populates="user", cascade="all, delete-orphan")
+    log_requests = relationship("LogRequest", back_populates="user", cascade="all, delete-orphan")
+    alerts = relationship("Alert", back_populates="user", cascade="all, delete-orphan")
 
 
 class Merchant(Base):
@@ -41,4 +41,4 @@ class Merchant(Base):
     contact_email = Column(String(255), nullable=True)
 
     # Relationships
-    payments = relationship("Payment", back_populates="merchant")
+    payments = relationship("Payment", back_populates="merchant", cascade="all, delete-orphan")

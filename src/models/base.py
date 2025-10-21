@@ -1,2 +1,4 @@
 # fraudshield/src/models/base.py
-from src.common.db import Base
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()

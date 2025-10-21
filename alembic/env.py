@@ -19,7 +19,7 @@ fileConfig(config.config_file_name)
 target_metadata = Base.metadata
 
 # Async DB URL (matches your DATABASE_URL)
-DATABASE_URL = "postgresql+asyncpg://fraud_user:fraudpass@localhost/fraudshield_db"
+DATABASE_URL = "postgresql+asyncpg://fraud_user:fraudpass@postgres/fraudshield_db"
 
 
 def run_migrations_offline():

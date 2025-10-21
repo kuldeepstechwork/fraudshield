@@ -3,4 +3,5 @@
 from .payment import PaymentCreate, PaymentResponse, PaymentFraudStatus
 from .user import UserCreate, UserResponse
 from .merchant import MerchantCreate, MerchantResponse
-from .alert import AlertResponse
+from .alert import AlertCreate, AlertResponse
+from .fraud import FraudRuleResponse
