@@ -6,6 +6,8 @@ from src.common.db import engine, Base
 from src.common.config import settings
 from datetime import datetime
 from aiokafka import AIOKafkaProducer
+from aiokafka import AIOKafkaAdminClient
+from aiokafka.structs import NewTopic
 
 # Import API routers
 from src.services.detector.api.endpoints_v1 import router as v1_router
@@ -25,6 +27,32 @@ async def lifespan(app: FastAPI):
     """
     # --- Startup events ---
     print(f"[{datetime.utcnow().isoformat()}] Detector service starting...")
+    # Ensure Kafka topics exist before producer/consumer operations
+    try:
+        admin = AIOKafkaAdminClient(bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS)
+        await admin.start()
+        existing = await admin.list_topics()
+        topics_to_ensure = [
+            settings.KAFKA_RAW_PAYMENTS_TOPIC,
+            settings.KAFKA_PROCESSED_PAYMENTS_TOPIC,
+            settings.KAFKA_FRAUD_ALERTS_TOPIC,
+        ]
+        new_topics = []
+        for t in topics_to_ensure:
+            if t not in existing:
+                # Create with 1 partition and replication factor 1 for local dev
+                new_topics.append(NewTopic(name=t, num_partitions=1, replication_factor=1))
+        if new_topics:
+            await admin.create_topics(new_topics=new_topics)
+            print(f"Created topics: {[t.name for t in new_topics]}")
+    except Exception as e:
+        # Non-fatal: if admin is not available yet, warn and continue; retries may happen elsewhere
+        print(f"Warning: failed to ensure Kafka topics on startup: {e}")
+    finally:
+        try:
+            await admin.stop()
+        except Exception:
+            pass
     # Start a long-lived Kafka producer and attach to app state for reuse
     producer = AIOKafkaProducer(bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS)
     await producer.start()
