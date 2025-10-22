@@ -3,7 +3,7 @@
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 from decimal import Decimal
 import json
@@ -49,11 +49,34 @@ async def run_fraud_detection_logic(
         fraud_score += Decimal("0.40")
         triggered_rules.append("HighValueTransaction")
 
+    # Rule: Extremely large transactions
+    if amount >= 5000:
+        fraud_score += Decimal("0.30")
+        triggered_rules.append("VeryHighValueTransaction")
+
     # Example: Check for high-risk countries (placeholder list)
     high_risk_countries = ["NG", "RU", "CN"]
     if country in high_risk_countries:
         fraud_score += Decimal("0.30")
         triggered_rules.append("HighRiskCountry")
+
+    # Rule: Country mismatch between user's country (if available) and billing country
+    try:
+        user_id = uuid.UUID(payment_data['user_id'])
+    except Exception:
+        user_id = None
+
+    if user_id is not None:
+        try:
+            # Fetch user record if available to compare country
+            res = await db_session.execute(select(User).where(User.user_id == user_id))
+            user = res.scalar_one_or_none()
+            if user and getattr(user, 'country', None) and country and user.country.lower() != country.lower():
+                fraud_score += Decimal("0.20")
+                triggered_rules.append("CountryMismatch")
+        except Exception:
+            # DB errors should not break detection; log and continue
+            logger.exception("Error checking user country for fraud rule")
 
     # Example: Check for multiple transactions from same IP in short time (requires fetching historical data)
     # This is a simplified example, a real check would be more complex and indexed.
@@ -74,6 +97,45 @@ async def run_fraud_detection_logic(
 
 
     # Determine final fraud flag and risk level
+    # --- Velocity and IP-based checks ---
+    try:
+        # How many payments from this user in last 5 minutes
+        five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
+        recent = await db_session.execute(
+            select(Payment).where(Payment.user_id == user_id, Payment.timestamp >= five_minutes_ago)
+        )
+        recent_count = len(recent.scalars().all())
+        if recent_count >= 4:
+            fraud_score += Decimal("0.25")
+            triggered_rules.append("RapidTransactions")
+
+        # How many payments from this IP in last 10 minutes
+        ip = payment_data.get('ip_address')
+        if ip:
+            ten_minutes_ago = datetime.utcnow() - timedelta(minutes=10)
+            ip_recent = await db_session.execute(
+                select(Payment).where(Payment.ip_address == ip, Payment.timestamp >= ten_minutes_ago)
+            )
+            ip_count = len(ip_recent.scalars().all())
+            if ip_count >= 5:
+                fraud_score += Decimal("0.30")
+                triggered_rules.append("HighIPVelocity")
+
+        # Card reuse across multiple user_ids (same card_last_four used by different users within window)
+        card_last_four = payment_data.get('card_last_four')
+        if card_last_four:
+            thirty_minutes_ago = datetime.utcnow() - timedelta(minutes=30)
+            card_reuse = await db_session.execute(
+                select(Payment).where(Payment.card_last_four == card_last_four, Payment.timestamp >= thirty_minutes_ago)
+            )
+            card_payments = card_reuse.scalars().all()
+            distinct_users = {str(p.user_id) for p in card_payments}
+            if len(distinct_users) >= 3:
+                fraud_score += Decimal("0.35")
+                triggered_rules.append("CardLastFourUsedByManyUsers")
+    except Exception:
+        logger.exception("Error during velocity/card/ip checks")
+
     if fraud_score >= 0.70:
         fraud_flag = True
         risk_level = "High"
