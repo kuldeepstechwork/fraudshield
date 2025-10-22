@@ -1,5 +1,6 @@
 # fraudshield/src/services/fraud_consumer/consumer_logic.py
 
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime
@@ -9,6 +10,9 @@ import json
 
 # Import ORM models
 from src.services.fraud_consumer.models import Payment, User, Merchant, FraudRule, Alert
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 # --- Placeholder Fraud Detection Logic ---
 async def run_fraud_detection_logic(
@@ -25,7 +29,13 @@ async def run_fraud_detection_logic(
     amount = Decimal(payment_data['amount'])
     ip_address = payment_data.get('ip_address')
     country = payment_data.get('country')
-    user_id = uuid.UUID(payment_data['user_id']) # Convert to UUID for DB queries
+    # Convert to UUID for DB queries, handle potential errors
+    try:
+        user_id = uuid.UUID(payment_data['user_id'])
+    except ValueError:
+        logger.error(f"Invalid user_id format received: {payment_data.get('user_id')}. Cannot run fraud detection.")
+        return Decimal("0.00"), False, "InvalidUserId", "Critical"
+
 
     fraud_score = Decimal("0.10") # Base score
     fraud_flag = False
@@ -82,6 +92,7 @@ async def process_payment_message(message_data: dict, db_session: AsyncSession):
     Processes a single payment message from Kafka.
     Applies fraud detection logic and persists the result to the database.
     """
+    logger.info(f"Processing payment message for user_id={message_data.get('user_id')} amount={message_data.get('amount')}")
     try:
         # Convert incoming string UUIDs and Decimals back to their types
         user_id = uuid.UUID(message_data['user_id'])
@@ -97,7 +108,8 @@ async def process_payment_message(message_data: dict, db_session: AsyncSession):
         if incoming_payment_id:
             try:
                 payment_uuid = uuid.UUID(incoming_payment_id)
-            except Exception:
+            except ValueError: # More specific exception for UUID conversion
+                logger.warning(f"Invalid UUID format for incoming payment_id '{incoming_payment_id}'. Generating a new one.")
                 payment_uuid = uuid.uuid4()
         else:
             payment_uuid = uuid.uuid4()
@@ -145,7 +157,7 @@ async def process_payment_message(message_data: dict, db_session: AsyncSession):
         if new_alert:
             await db_session.refresh(new_alert)
 
-        print(f"Successfully processed payment {new_payment.payment_id}. Fraud Flag: {new_payment.fraud_flag}, Score: {new_payment.fraud_score}")
+        logger.info(f"Successfully processed payment {new_payment.payment_id}. Fraud Flag: {new_payment.fraud_flag}, Score: {new_payment.fraud_score}")
 
         # Return result info for publishing
         result = {
@@ -170,6 +182,6 @@ async def process_payment_message(message_data: dict, db_session: AsyncSession):
         return result, alert_result
 
     except Exception as e:
-        print(f"Error in process_payment_message for data {message_data}: {e}")
+        logger.error(f"Error in process_payment_message for data {message_data}: {e}", exc_info=True)
         await db_session.rollback() # Rollback transaction on error
         raise

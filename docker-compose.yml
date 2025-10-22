@@ -1,3 +1,4 @@
+# fraudshield/docker-compose.yml
 version: '3.9'
 
 services:
@@ -7,9 +8,9 @@ services:
     restart: always
     env_file: .env
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-fraudshield_db}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespass}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - '5432:5432'
     volumes:
@@ -76,10 +77,12 @@ services:
     working_dir: /app
     environment:
       - PYTHONPATH=/app
-    command: /bin/sh -c "\
-      apt-get update && apt-get install -y postgresql-client && \
-      pip install --no-cache-dir -r requirements.txt && \
-      python -m src.services.fraud_consumer.main"
+    command: >
+      /bin/sh -c "
+      apt-get update && apt-get install -y postgresql-client -qq &&
+      pip install --no-cache-dir -r requirements.txt -q &&
+      exec python -m src.services.fraud_consumer.main
+      "
 
 volumes:
   pgdata:

@@ -1,3 +1,5 @@
+# fraudshield/src/services/detector/models.py
+
 """Detector service model wrapper.
 
 This module used to contain full ORM model definitions which duplicated the
