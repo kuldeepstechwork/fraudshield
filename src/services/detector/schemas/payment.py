@@ -1,10 +1,12 @@
 # fraudshield/src/services/detector/schemas/payment.py
 
 from pydantic import BaseModel, Field
+from pydantic import ConfigDict
 from decimal import Decimal
 from typing import Optional
 from datetime import datetime
 import uuid
+import ipaddress
 
 class PaymentCreate(BaseModel):
     user_id: uuid.UUID
@@ -39,12 +41,12 @@ class PaymentResponse(BaseModel):
     country: Optional[str] = None
     reason_code: Optional[str] = None
 
-    class Config:
-        from_attributes = True
-        json_encoders = {
-            Decimal: str,
-            uuid.UUID: str
-        }
+    model_config = ConfigDict(from_attributes=True, json_encoders={
+        Decimal: str,
+        uuid.UUID: str,
+        ipaddress.IPv4Address: str,
+        ipaddress.IPv6Address: str,
+    })
 
 class PaymentFraudStatus(BaseModel):
     payment_id: uuid.UUID
@@ -54,9 +56,7 @@ class PaymentFraudStatus(BaseModel):
     risk_level: str
     reason_code: Optional[str]
 
-    class Config:
-        from_attributes = True
-        json_encoders = {
-            Decimal: str,
-            uuid.UUID: str
-        }
+    model_config = ConfigDict(from_attributes=True, json_encoders={
+        Decimal: str,
+        uuid.UUID: str,
+    })

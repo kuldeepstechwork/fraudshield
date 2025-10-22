@@ -46,7 +46,16 @@ async def create_merchant(db: AsyncSession, merchant_data: MerchantCreate) -> Me
 # Payment CRUD
 # ----------------------
 async def get_payment_by_id(db: AsyncSession, payment_id: uuid.UUID) -> Payment | None:
-    return await db.get(Payment, payment_id)
+    payment = await db.get(Payment, payment_id)
+    # Normalize IP address type: Postgres INET may be returned as ipaddress.IPv4Address
+    # Pydantic response models expect a string for ip_address, so convert here.
+    if payment is not None and getattr(payment, "ip_address", None) is not None:
+        try:
+            payment.ip_address = str(payment.ip_address)
+        except Exception:
+            # If conversion fails for any reason, set to None to avoid validation errors
+            payment.ip_address = None
+    return payment
 
 async def create_payment(db: AsyncSession, payment_data: PaymentCreate) -> Payment:
     """

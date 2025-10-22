@@ -2,14 +2,16 @@
 
 fastapi
 uvicorn[standard]
-aiokafka
 sqlalchemy
 asyncpg
 pydantic
 pydantic-settings
 alembic
 email-validator
-
+# Kafka dependencies — pin these versions
+# Use a recent aiokafka that is available on PyPI and compatible with this codebase
+aiokafka==0.12.0
+kafka-python==2.0.2
 # If you plan to use an ORM for Kafka, you might add:
 # confluent-kafka # if using the C++ client with Python bindings, often faster
 # python-dotenv # if you need to load .env files manually outside pydantic-settings
