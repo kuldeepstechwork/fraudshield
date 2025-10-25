@@ -56,8 +56,10 @@ async def lifespan(app: FastAPI):
             settings.KAFKA_PROCESSED_PAYMENTS_TOPIC,
             settings.KAFKA_FRAUD_ALERTS_TOPIC,
         ]
+        # Create topics with configurable partition count so we can partition by country
+        partitions = getattr(settings, "KAFKA_TOPIC_PARTITIONS", 3)
         new_topics = [
-            NewTopic(name=t, num_partitions=1, replication_factor=1)
+            NewTopic(name=t, num_partitions=partitions, replication_factor=1)
             for t in topics_to_ensure if t not in existing
         ]
         if new_topics:
@@ -71,8 +73,32 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
-    # Start Kafka producer and attach to app state
-    producer = AIOKafkaProducer(bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS)
+    # Start Kafka producer and attach to app state.
+    # Use key/value serializers so we can pass a country code as message key and
+    # human-friendly dicts/bytes as values.
+    def _key_serializer(k):
+        if k is None:
+            return None
+        if isinstance(k, (bytes, bytearray)):
+            return bytes(k)
+        return str(k).encode("utf-8")
+
+    def _value_serializer(v):
+        if v is None:
+            return None
+        if isinstance(v, (bytes, bytearray)):
+            return bytes(v)
+        import json as _json
+        try:
+            return _json.dumps(v).encode("utf-8")
+        except Exception:
+            return str(v).encode("utf-8")
+
+    producer = AIOKafkaProducer(
+        bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
+        key_serializer=_key_serializer,
+        value_serializer=_value_serializer,
+    )
     await producer.start()
     app.state.kafka_producer = producer
 

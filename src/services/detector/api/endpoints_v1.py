@@ -136,11 +136,21 @@ async def process_payment_endpoint(
 
         message_bytes = json.dumps(payment_dict).encode("utf-8")
 
-        # Log payload before sending for debugging
-        LOG.info("Sending payment message to Kafka topic=%s payload=%s", settings.KAFKA_RAW_PAYMENTS_TOPIC, payment_dict)
+        # Use the country field as the partitioning key so all payments from the
+        # same country are routed to the same topic partition. Default to 'UNK'.
+        country_key = payment_dict.get("country") or "UNK"
 
-        # Send to Kafka
-        await producer.send_and_wait(settings.KAFKA_RAW_PAYMENTS_TOPIC, message_bytes)
+        # Log payload before sending for debugging
+        LOG.info("Sending payment message to Kafka topic=%s country=%s payload=%s",
+                 settings.KAFKA_RAW_PAYMENTS_TOPIC, country_key, payment_dict)
+
+        # Send to Kafka with a key (country) to control partitioning
+        # producer has been configured with key/value serializers in app startup
+        await producer.send_and_wait(
+            settings.KAFKA_RAW_PAYMENTS_TOPIC,
+            value=message_bytes,
+            key=country_key,
+        )
 
         # Return accepted and the client-visible payment id so callers can query later
         return {"message": "Payment received and sent to Kafka for processing", "status": "accepted", "payment_id": client_payment_id}

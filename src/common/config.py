@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     KAFKA_PROCESSED_PAYMENTS_TOPIC: str
     KAFKA_FRAUD_ALERTS_TOPIC: str
     KAFKA_CONSUMER_GROUP_ID: str
+    # Number of partitions to create for Kafka topics (used when creating topics on startup)
+    # Keep reasonably small for local dev; increase in production to match consumer parallelism
+    KAFKA_TOPIC_PARTITIONS: int = 3
 
     # FastAPI
     API_HOST: str = "0.0.0.0"
