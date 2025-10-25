@@ -9,6 +9,8 @@ The project is designed as:
 
 ## 🚀 High-Level Summary
 
+![FraudShield Architecture](fraudshield/docs/A1.png)
+
 - **Ingest**: A FastAPI "detector" service accepts payment submissions via HTTP and publishes them to a Kafka topic (`raw_payments`).
 - **Process**: A Kafka consumer subscribes to `raw_payments`, runs rule-based fraud detection, stores records and alerts in Postgres, and publishes enriched messages downstream.
 - **Observe & Scale**: Kafka partitions (country-based by default) enable horizontal scalability and ordered message processing.
