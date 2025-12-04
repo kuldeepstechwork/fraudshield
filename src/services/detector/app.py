@@ -1,6 +1,7 @@
 # fraudshield/detector/app.py
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Security
+from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import AsyncGenerator, List, Optional
 from datetime import datetime
@@ -12,8 +13,7 @@ from aiokafka import AIOKafkaProducer
 import asyncio
 
 # Pydantic schemas for request/response
-from pydantic import BaseModel, Field, EmailStr
-from decimal import Decimal
+from .schemas import PaymentRequest, UserCreate, UserResponse, MerchantCreate, MerchantResponse, PaymentResponse
 
 # Import database and models
 from .db import SessionLocal, engine, Base
@@ -49,75 +49,16 @@ async def get_kafka_producer() -> AsyncGenerator[AIOKafkaProducer, None]:
     finally:
         await producer.stop()
 
-# --- Pydantic Schemas ---
+# --- Security ---
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# Schemas for User
-class UserBase(BaseModel):
-    username: str = Field(..., min_length=3, max_length=100)
-    email: EmailStr
-    country: Optional[str] = None
-    phone_number: Optional[str] = None
-
-class UserCreate(UserBase):
-    pass
-
-class UserResponse(UserBase):
-    user_id: uuid.UUID
-    created_at: datetime
-    last_login: Optional[datetime]
-    is_active: bool
-    kyc_status: str
-
-    class Config:
-        from_attributes = True # Allows Pydantic to read ORM models
-
-# Schemas for Merchant
-class MerchantBase(BaseModel):
-    merchant_name: str = Field(..., min_length=3, max_length=255)
-    category: Optional[str] = None
-    country: Optional[str] = None
-    website_url: Optional[str] = None
-    contact_email: Optional[EmailStr] = None
-
-class MerchantCreate(MerchantBase):
-    pass
-
-class MerchantResponse(MerchantBase):
-    merchant_id: uuid.UUID
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-# Schemas for Payment (for incoming requests)
-class PaymentCreate(BaseModel):
-    user_id: uuid.UUID
-    merchant_id: uuid.UUID
-    amount: Decimal = Field(..., gt=0, decimal_places=2) # Greater than 0, 2 decimal places
-    currency: str = Field(..., min_length=3, max_length=3)
-    payment_method: str = Field(..., min_length=2, max_length=50)
-    card_type: Optional[str] = None
-    card_last_four: Optional[str] = None
-    transaction_type: str = Field(..., min_length=2, max_length=20)
-    ip_address: Optional[str] = None # Will be parsed to INET in DB, use str for input
-    device_info: Optional[dict] = None # JSON data
-    country: Optional[str] = None
-
-class PaymentResponse(BaseModel):
-    payment_id: uuid.UUID
-    user_id: uuid.UUID
-    merchant_id: uuid.UUID
-    amount: Decimal
-    currency: str
-    payment_method: str
-    status: str
-    timestamp: datetime
-    fraud_score: Decimal
-    fraud_flag: bool
-    risk_level: str
-
-    class Config:
-        from_attributes = True # Enable Pydantic to read ORM models
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    if api_key_header == settings.API_KEY:
+        return api_key_header
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Could not validate credentials",
+    )
 
 # --- API Endpoints ---
 
@@ -163,38 +104,45 @@ async def create_merchant(merchant_data: MerchantCreate, db: AsyncSession = Depe
 
 @app.post("/payments/", response_model=dict, status_code=status.HTTP_202_ACCEPTED)
 async def process_payment(
-    payment_data: PaymentCreate,
+    payment_data: PaymentRequest,
+    api_key: str = Depends(get_api_key),
     producer: AIOKafkaProducer = Depends(get_kafka_producer),
-    db: AsyncSession = Depends(get_db) # We need DB to check user/merchant existence
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Receives payment transaction data and sends it to Kafka for asynchronous processing.
+    Receives payment transaction data, creates a pending payment record, 
+    and sends it to Kafka for asynchronous processing.
     Returns an immediate acceptance response.
     """
-    # Basic validation: Check if user and merchant exist
-    user = await db.get(User, payment_data.user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-    merchant = await db.get(Merchant, payment_data.merchant_id)
-    if not merchant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
+    # Create a new Payment record with a "Pending" status
+    new_payment = Payment(
+        payment_id=payment_data.transaction_id, # Use transaction_id as payment_id
+        user_id=payment_data.user_id,
+        merchant_id=payment_data.merchant_id,
+        amount=payment_data.amount,
+        currency=payment_data.currency,
+        payment_method=payment_data.payment_method,
+        status="Pending",
+        timestamp=payment_data.timestamp,
+        ip_address=payment_data.ip_address,
+        device_info=payment_data.device_fingerprint,
+        country=None # Or extract from IP if you have a service for that
+    )
+    db.add(new_payment)
+    await db.commit()
+    await db.refresh(new_payment)
 
     try:
-        # Convert Pydantic model to dict, then to JSON bytes
-        # Use str() for Decimal and UUID before json.dumps
-        payment_dict = payment_data.model_dump()
-        payment_dict['amount'] = str(payment_dict['amount']) # Convert Decimal to string
-        payment_dict['user_id'] = str(payment_dict['user_id']) # Convert UUID to string
-        payment_dict['merchant_id'] = str(payment_dict['merchant_id']) # Convert UUID to string
-
-        message_bytes = json.dumps(payment_dict).encode('utf-8')
-        
         # Send to Kafka
-        await producer.send_and_wait(settings.KAFKA_RAW_PAYMENTS_TOPIC, message_bytes)
+        await producer.send_and_wait(
+            settings.KAFKA_RAW_PAYMENTS_TOPIC,
+            payment_data.model_dump_json().encode("utf-8")
+        )
 
-        return {"message": "Payment received and sent to Kafka for processing", "payment_id_placeholder": "awaiting processing"}
+        return {"message": "Payment received and sent to Kafka for processing", "transaction_id": payment_data.transaction_id}
     except Exception as e:
+        # Rollback the database transaction if Kafka fails
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send payment to Kafka: {e}"

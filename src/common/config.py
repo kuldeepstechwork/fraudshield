@@ -17,8 +17,12 @@ class Settings(BaseSettings):
     # Keep reasonably small for local dev; increase in production to match consumer parallelism
     KAFKA_TOPIC_PARTITIONS: int = 3
 
+    # Redis
+    REDIS_URL: str = "redis://redis:6379"
+
     # FastAPI
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
+    API_KEY: str = "dev-secret-key"
 
 settings = Settings()

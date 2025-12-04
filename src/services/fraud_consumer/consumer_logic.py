@@ -1,237 +1,98 @@
-# fraudshield/src/services/fraud_consumer/consumer_logic.py
-
 import logging
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from datetime import datetime, timedelta
+import json
 import uuid
 from decimal import Decimal
-import json
+from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
-# Import ORM models
-from src.services.fraud_consumer.models import Payment, User, Merchant, FraudRule, Alert
+from src.services.fraud_consumer.models import Payment, Alert
+from src.services.fraud_consumer.rule_engine import RuleEngine
+from src.services.fraud_consumer.rules.blacklist_rule import IPBlacklistRule
+from src.services.fraud_consumer.rules.velocity_rule import VelocityRule
+from src.common.redis_utils import get_redis_client
+from src.services.detector.schemas import PaymentRequest
 
-# Initialize logger
 logger = logging.getLogger(__name__)
 
-# --- Placeholder Fraud Detection Logic ---
-async def run_fraud_detection_logic(
-    payment_data: dict, 
-    db_session: AsyncSession
-) -> (Decimal, bool, str | None, str):
-    """
-    Applies fraud rules and/or ML models to determine fraud score and flag.
-    Returns (fraud_score, fraud_flag, reason_code, risk_level).
-    
-    This is where your sophisticated fraud detection will live.
-    For now, it uses simple rule-based logic.
-    """
-    amount = Decimal(payment_data['amount'])
-    ip_address = payment_data.get('ip_address')
-    country = payment_data.get('country')
-    # Convert to UUID for DB queries, handle potential errors
-    try:
-        user_id = uuid.UUID(payment_data['user_id'])
-    except ValueError:
-        logger.error(f"Invalid user_id format received: {payment_data.get('user_id')}. Cannot run fraud detection.")
-        return Decimal("0.00"), False, "InvalidUserId", "Critical"
-
-
-    fraud_score = Decimal("0.10") # Base score
-    fraud_flag = False
-    reason_code = None
-    risk_level = "Low"
-
-    triggered_rules = []
-
-    # Example: Check for high-value transactions
-    if amount >= 1000:
-        fraud_score += Decimal("0.40")
-        triggered_rules.append("HighValueTransaction")
-
-    # Rule: Extremely large transactions
-    if amount >= 5000:
-        fraud_score += Decimal("0.30")
-        triggered_rules.append("VeryHighValueTransaction")
-
-    # Example: Check for high-risk countries (placeholder list)
-    high_risk_countries = ["NG", "RU", "CN"]
-    if country in high_risk_countries:
-        fraud_score += Decimal("0.30")
-        triggered_rules.append("HighRiskCountry")
-
-    # Rule: Country mismatch between user's country (if available) and billing country
-    try:
-        user_id = uuid.UUID(payment_data['user_id'])
-    except Exception:
-        user_id = None
-
-    if user_id is not None:
-        try:
-            # Fetch user record if available to compare country
-            res = await db_session.execute(select(User).where(User.user_id == user_id))
-            user = res.scalar_one_or_none()
-            if user and getattr(user, 'country', None) and country and user.country.lower() != country.lower():
-                fraud_score += Decimal("0.20")
-                triggered_rules.append("CountryMismatch")
-        except Exception:
-            # DB errors should not break detection; log and continue
-            logger.exception("Error checking user country for fraud rule")
-
-    # Example: Check for multiple transactions from same IP in short time (requires fetching historical data)
-    # This is a simplified example, a real check would be more complex and indexed.
-    # For now, let's just make a dummy check
-    
-    # In a real scenario, you'd query the DB for user's past transactions or IP history
-    # Example: Get recent payments by this user
-    # result = await db_session.execute(
-    #     select(Payment).where(
-    #         Payment.user_id == user_id,
-    #         Payment.timestamp > (datetime.utcnow() - timedelta(minutes=5))
-    #     )
-    # )
-    # recent_payments_count = len(result.scalars().all())
-    # if recent_payments_count > 3: # More than 3 payments in 5 minutes
-    #     fraud_score += Decimal("0.20")
-    #     triggered_rules.append("RapidTransactions")
-
-
-    # Determine final fraud flag and risk level
-    # --- Velocity and IP-based checks ---
-    try:
-        # How many payments from this user in last 5 minutes
-        five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
-        recent = await db_session.execute(
-            select(Payment).where(Payment.user_id == user_id, Payment.timestamp >= five_minutes_ago)
-        )
-        recent_count = len(recent.scalars().all())
-        if recent_count >= 4:
-            fraud_score += Decimal("0.25")
-            triggered_rules.append("RapidTransactions")
-
-        # How many payments from this IP in last 10 minutes
-        ip = payment_data.get('ip_address')
-        if ip:
-            ten_minutes_ago = datetime.utcnow() - timedelta(minutes=10)
-            ip_recent = await db_session.execute(
-                select(Payment).where(Payment.ip_address == ip, Payment.timestamp >= ten_minutes_ago)
-            )
-            ip_count = len(ip_recent.scalars().all())
-            if ip_count >= 5:
-                fraud_score += Decimal("0.30")
-                triggered_rules.append("HighIPVelocity")
-
-        # Card reuse across multiple user_ids (same card_last_four used by different users within window)
-        card_last_four = payment_data.get('card_last_four')
-        if card_last_four:
-            thirty_minutes_ago = datetime.utcnow() - timedelta(minutes=30)
-            card_reuse = await db_session.execute(
-                select(Payment).where(Payment.card_last_four == card_last_four, Payment.timestamp >= thirty_minutes_ago)
-            )
-            card_payments = card_reuse.scalars().all()
-            distinct_users = {str(p.user_id) for p in card_payments}
-            if len(distinct_users) >= 3:
-                fraud_score += Decimal("0.35")
-                triggered_rules.append("CardLastFourUsedByManyUsers")
-    except Exception:
-        logger.exception("Error during velocity/card/ip checks")
-
-    if fraud_score >= 0.70:
-        fraud_flag = True
-        risk_level = "High"
-    elif fraud_score >= 0.40:
-        fraud_flag = True
-        risk_level = "Medium"
-    
-    if triggered_rules:
-        reason_code = ", ".join(triggered_rules)
-    
-    return fraud_score, fraud_flag, reason_code, risk_level
-
-# --- Message Processing Function ---
 async def process_payment_message(message_data: dict, db_session: AsyncSession):
     """
     Processes a single payment message from Kafka.
-    Applies fraud detection logic and persists the result to the database.
+    Applies fraud detection logic using RuleEngine and updates the payment record.
     """
     logger.info(f"Processing payment message for user_id={message_data.get('user_id')} amount={message_data.get('amount')}")
+    
     try:
-        # Convert incoming string UUIDs and Decimals back to their types
-        user_id = uuid.UUID(message_data['user_id'])
-        merchant_id = uuid.UUID(message_data['merchant_id'])
-        amount = Decimal(message_data['amount'])
+        # 1. Parse message into PaymentRequest schema (validates data)
+        try:
+            payment_request = PaymentRequest(**message_data)
+        except Exception as e:
+            logger.error(f"Invalid message format: {e}")
+            # If we can't parse it, we can't process it. 
+            # In a real system, we might DLQ this.
+            return None, None
 
-        # --- Run Fraud Detection ---
-        fraud_score, fraud_flag, reason_code, risk_level = await run_fraud_detection_logic(message_data, db_session)
+        # 2. Initialize Rule Engine
+        async with get_redis_client() as redis_client:
+            rules = [IPBlacklistRule(), VelocityRule()]
+            rule_engine = RuleEngine(rules, redis_client)
 
-        # --- Save Payment Record to Database ---
-        # If producer provided a client-visible payment_id include it; otherwise generate one
-        incoming_payment_id = message_data.get("payment_id")
-        if incoming_payment_id:
-            try:
-                payment_uuid = uuid.UUID(incoming_payment_id)
-            except ValueError: # More specific exception for UUID conversion
-                logger.warning(f"Invalid UUID format for incoming payment_id '{incoming_payment_id}'. Generating a new one.")
-                payment_uuid = uuid.uuid4()
-        else:
-            payment_uuid = uuid.uuid4()
+            # 3. Evaluate Fraud
+            decision, fraud_score, triggered_rules = await rule_engine.evaluate_event(payment_request)
 
-        new_payment = Payment(
-            payment_id=payment_uuid,
-            user_id=user_id,
-            merchant_id=merchant_id,
-            amount=amount,
-            currency=message_data['currency'],
-            payment_method=message_data['payment_method'],
-            card_type=message_data.get('card_type'),
-            card_last_four=message_data.get('card_last_four'),
-            transaction_type=message_data['transaction_type'],
-            status="Approved" if not fraud_flag else "Review Required", # Initial status post-detection
-            timestamp=datetime.fromisoformat(message_data.get('timestamp')) if message_data.get('timestamp') else datetime.utcnow(),
-            ip_address=message_data.get('ip_address'),
-            device_info=message_data.get('device_info'),
-            country=message_data.get('country'),
-            fraud_score=fraud_score,
-            fraud_flag=fraud_flag,
-            reason_code=reason_code,
-            risk_level=risk_level,
-        )
+        # 4. Update Payment Record in DB
+        # transaction_id is used as payment_id in app.py
+        try:
+            payment_id = uuid.UUID(payment_request.transaction_id) 
+        except ValueError:
+             logger.error(f"Invalid payment_id UUID: {payment_request.transaction_id}")
+             return None, None
 
-        db_session.add(new_payment)
-        await db_session.flush()  # Flush to get new_payment.payment_id before commit if needed for alert
+        payment = await db_session.get(Payment, payment_id)
 
-        # --- Create Alert if Fraud Flagged ---
+        if not payment:
+            logger.error(f"Payment {payment_id} not found in database. It should have been created by Detector.")
+            return None, None
+
+        payment.fraud_score = Decimal(str(fraud_score))
+        payment.fraud_flag = (decision != "approve")
+        payment.risk_level = "High" if decision == "decline" else ("Medium" if decision == "review" else "Low")
+        payment.reason_code = ", ".join(triggered_rules)
+        payment.status = "Rejected" if decision == "decline" else ("Review Required" if decision == "review" else "Approved")
+        
+        # 5. Create Alert if needed
         new_alert = None
-        if fraud_flag:
+        if payment.fraud_flag:
             new_alert = Alert(
                 alert_id=uuid.uuid4(),
-                payment_id=new_payment.payment_id,
-                user_id=user_id,
+                payment_id=payment.payment_id,
+                user_id=payment.user_id,
                 alert_type="Potential Fraud",
-                description=f"Payment flagged with score {fraud_score} (Risk: {risk_level}) due to: {reason_code or 'Various indicators'}",
+                description=f"Flagged: {decision}. Score: {fraud_score}. Rules: {payment.reason_code}",
                 timestamp=datetime.utcnow(),
-                status="New"  # Analyst needs to review
+                status="New"
             )
             db_session.add(new_alert)
 
         await db_session.commit()
-        await db_session.refresh(new_payment)  # Refresh to get latest state including auto-generated fields if any
+        await db_session.refresh(payment)
         if new_alert:
             await db_session.refresh(new_alert)
 
-        logger.info(f"Successfully processed payment {new_payment.payment_id}. Fraud Flag: {new_payment.fraud_flag}, Score: {new_payment.fraud_score}")
+        logger.info(f"Processed payment {payment.payment_id}. Decision: {decision}")
 
-        # Return result info for publishing
+        # 6. Prepare Result for Downstream
         result = {
-            "payment_id": str(new_payment.payment_id),
-            "user_id": str(new_payment.user_id),
-            "merchant_id": str(new_payment.merchant_id),
-            "amount": str(new_payment.amount),
-            "fraud_score": str(new_payment.fraud_score),
-            "fraud_flag": bool(new_payment.fraud_flag),
-            "risk_level": new_payment.risk_level,
-            "status": new_payment.status,
+            "payment_id": str(payment.payment_id),
+            "user_id": str(payment.user_id),
+            "merchant_id": str(payment.merchant_id),
+            "amount": str(payment.amount),
+            "fraud_score": str(payment.fraud_score),
+            "fraud_flag": bool(payment.fraud_flag),
+            "risk_level": payment.risk_level,
+            "status": payment.status,
         }
+        
         alert_result = None
         if new_alert:
             alert_result = {
@@ -241,9 +102,10 @@ async def process_payment_message(message_data: dict, db_session: AsyncSession):
                 "description": new_alert.description,
                 "status": new_alert.status,
             }
+            
         return result, alert_result
 
     except Exception as e:
-        logger.error(f"Error in process_payment_message for data {message_data}: {e}", exc_info=True)
-        await db_session.rollback() # Rollback transaction on error
+        logger.error(f"Error in process_payment_message: {e}", exc_info=True)
+        await db_session.rollback()
         raise

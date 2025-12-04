@@ -61,16 +61,18 @@ SCENARIOS = [
 def build_payload(scenario: str, user_id: str = None, card_last_four: str = None, ip: str = None):
     uid = user_id or str(uuid.uuid4())
     payload = {
+        "transaction_id": str(uuid.uuid4()),
+        "idempotency_key": str(uuid.uuid4()),
         "user_id": uid,
         "merchant_id": DEFAULT_MERCHANT,
         "amount": 10,
         "currency": "USD",
-        "payment_method": "CC",
+        "payment_method": "credit_card",
         "card_type": "standard",
         "card_last_four": card_last_four or random.choice(CARD_LAST4_POOL),
         "transaction_type": "sale",
         "ip_address": ip or random.choice(IP_POOL),
-        "device_info": {"ua": "load-test"},
+        "device_fingerprint": "test-device-fingerprint",
         "country": "US",
     }
 
@@ -112,7 +114,8 @@ async def worker(job_q: asyncio.Queue, results: list, client: httpx.AsyncClient)
         payload = build_payload(scenario, user_id=user_id, card_last_four=card_last_four, ip=ip)
         start = time.monotonic()
         try:
-            r = await client.post(BASE_URL, json=payload, timeout=10)
+            headers = {"X-API-Key": "dev-secret-key"}
+            r = await client.post(BASE_URL, json=payload, headers=headers, timeout=10)
             latency = time.monotonic() - start
             results.append((r.status_code, latency, scenario, payload))
         except Exception as e:

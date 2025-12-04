@@ -1,6 +1,7 @@
 #fraudshield/src/services/detector/api/endpoints_v1.py
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Security
+from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
 from aiokafka import AIOKafkaProducer
 import json
@@ -34,6 +35,17 @@ import logging
 LOG = logging.getLogger("detector.api")
 
 router = APIRouter()
+
+# --- Security ---
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    if api_key_header == settings.API_KEY:
+        return api_key_header
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Could not validate credentials",
+    )
 
 # ----------------------
 # User Endpoints
@@ -103,6 +115,7 @@ async def get_merchant_endpoint(
 @router.post("/payments/", response_model=dict, status_code=status.HTTP_202_ACCEPTED)
 async def process_payment_endpoint(
     payment_data: PaymentCreate,
+    api_key: str = Depends(get_api_key),
     producer: AIOKafkaProducer = Depends(get_kafka_producer_instance),
     db: AsyncSession = Depends(get_db_session)
 ):
@@ -121,11 +134,34 @@ async def process_payment_endpoint(
 
     try:
         # Generate a client-visible payment_id so the caller can poll status
-        client_payment_id = str(uuid.uuid4())
+        client_payment_id = uuid.uuid4()
+
+        # Create a pending payment record in the database
+        from src.models import Payment
+        pending_payment = Payment(
+            payment_id=client_payment_id,
+            user_id=payment_data.user_id,
+            merchant_id=payment_data.merchant_id,
+            amount=payment_data.amount,
+            currency=payment_data.currency,
+            payment_method=payment_data.payment_method,
+            card_type=payment_data.card_type,
+            card_last_four=payment_data.card_last_four,
+            transaction_type=payment_data.transaction_type,
+            status="Pending",
+            ip_address=payment_data.ip_address,
+            device_info=payment_data.device_info,
+            country=payment_data.country,
+        )
+        db.add(pending_payment)
+        await db.commit()
+        await db.refresh(pending_payment)
 
         # Convert Pydantic model to dict and include client-generated id
         payment_dict = payment_data.model_dump()
-        payment_dict["payment_id"] = client_payment_id
+        payment_dict["payment_id"] = str(client_payment_id)
+        payment_dict["transaction_id"] = str(client_payment_id)  # Use payment_id as transaction_id
+        payment_dict["idempotency_key"] = str(client_payment_id)  # Use same for idempotency
 
         # Convert Decimal/UUID for JSON serialization
         for k, v in list(payment_dict.items()):
@@ -153,7 +189,7 @@ async def process_payment_endpoint(
         )
 
         # Return accepted and the client-visible payment id so callers can query later
-        return {"message": "Payment received and sent to Kafka for processing", "status": "accepted", "payment_id": client_payment_id}
+        return {"message": "Payment received and sent to Kafka for processing", "status": "accepted", "payment_id": str(client_payment_id)}
 
     except Exception as e:
         raise HTTPException(
